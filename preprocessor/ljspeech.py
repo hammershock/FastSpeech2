@@ -15,6 +15,7 @@ def prepare_align(config):
     max_wav_value = config["preprocessing"]["audio"]["max_wav_value"]
     cleaners = config["preprocessing"]["text"]["text_cleaners"]
     speaker = "LJSpeech"
+
     with open(os.path.join(in_dir, "metadata.csv"), encoding="utf-8") as f:
         for line in tqdm(f):
             parts = line.strip().split("|")
@@ -22,18 +23,20 @@ def prepare_align(config):
             text = parts[2]
             text = _clean_text(text, cleaners)
 
-            wav_path = os.path.join(in_dir, "wavs", "{}.wav".format(base_name))
+            wav_path = os.path.join(in_dir, "wavs", f"{base_name}.wav")
             if os.path.exists(wav_path):
                 os.makedirs(os.path.join(out_dir, speaker), exist_ok=True)
-                wav, _ = librosa.load(wav_path, sampling_rate)
+                wav, _ = librosa.load(wav_path, sr=sampling_rate)
                 wav = wav / max(abs(wav)) * max_wav_value
+
+
                 wavfile.write(
-                    os.path.join(out_dir, speaker, "{}.wav".format(base_name)),
+                    os.path.join(out_dir, speaker, f"{base_name}.wav"),
                     sampling_rate,
                     wav.astype(np.int16),
                 )
                 with open(
-                    os.path.join(out_dir, speaker, "{}.lab".format(base_name)),
+                    os.path.join(out_dir, speaker, f"{base_name}.lab"),
                     "w",
                 ) as f1:
                     f1.write(text)

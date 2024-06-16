@@ -1,3 +1,7 @@
+"""
+Step 2:
+Raw -> Preprocessed
+"""
 import argparse
 
 import yaml

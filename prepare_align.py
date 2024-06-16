@@ -1,3 +1,8 @@
+"""
+Generate .lab pinyin files in wav dir
+
+Corpus -> Raw
+"""
 import argparse
 
 import yaml

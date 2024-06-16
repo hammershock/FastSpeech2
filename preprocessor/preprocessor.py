@@ -1,7 +1,7 @@
 import os
 import random
 import json
-from typing import Tuple
+from typing import Tuple, Dict, Optional, List
 
 import tgt
 import librosa
@@ -51,45 +51,59 @@ class Preprocessor:
             config["preprocessing"]["mel"]["mel_fmax"],
         )
 
-    def build_from_path(self):
+    def build_from_path(self) -> List[str]:
+        """
+        input files:
+            wav files, lab files, TextGrid files
+        output files:
+            stats file, speakers map, duration/energy/mel/pitch files, train/val.txt
+        for all speakers:
+            read Alignment Information from TextGrid
+
+        compute stats,
+        """
+        # ensure output dirs exist
         os.makedirs((os.path.join(self.out_dir, "mel")), exist_ok=True)
         os.makedirs((os.path.join(self.out_dir, "pitch")), exist_ok=True)
         os.makedirs((os.path.join(self.out_dir, "energy")), exist_ok=True)
         os.makedirs((os.path.join(self.out_dir, "duration")), exist_ok=True)
-
         print("Processing Data ...")
-        out = list()
+
+        out = []
         n_frames = 0
         pitch_scaler = StandardScaler()
         energy_scaler = StandardScaler()
 
         # Compute pitch, energy, duration, and mel-spectrogram
-
+        # get speaker names
         speaker_names = [speaker for speaker in os.listdir(self.in_dir) if os.path.isdir(os.path.join(self.in_dir, speaker))]
-        speakers = {speaker: idx for idx, speaker in enumerate(speaker_names)}
+        # map speaker name to speaker id
+        speakers: Dict[str, int] = {speaker: idx for idx, speaker in enumerate(speaker_names)}
 
         for idx, speaker in enumerate(speaker_names):
             speaker_dir = os.path.join(self.in_dir, speaker)
+            # all .wav files in speaker_dir
             wav_files = [wav_name for wav_name in os.listdir(speaker_dir) if wav_name.endswith(".wav")]
 
             for wav_name in tqdm(wav_files, desc=f"Processing speaker {idx}/{len(speakers)}: {speaker}", total=len(wav_files)):
-                if wav_name.endswith(".wav"):
-                    data_id = wav_name.split(".")[0]  # 'SSB04260041'
-                    # './preprocessed_data/AISHELL3/TextGrid/SSB0426/SSB04260371.TextGrid'
-                    tg_path = os.path.join(self.out_dir, "TextGrid", speaker, f"{data_id}.TextGrid")
+                data_id = wav_name.split(".")[0]  # 'SSB04260041'
+                # './preprocessed_data/AISHELL3/TextGrid/SSB0426/SSB04260371.TextGrid'
+                tg_path = os.path.join(self.out_dir, "TextGrid", speaker, f"{data_id}.TextGrid")
+                if os.path.exists(tg_path):
+                    # TODO: read .TextGrid files
+                    # utterance: 发声
+                    ret = self.process_utterance(speaker, data_id)  # this method will also save the result
+                    if ret is not None:
+                        # extract average features of each phone...
+                        info, pitch, energy, num_mels = ret
+                        out.append(info)
 
-                    if os.path.exists(tg_path):
-                        ret = self.process_utterance(speaker, data_id)
-                        if ret is not None:
-                            info, pitch, energy, n = ret
-                            out.append(info)
+                        if len(pitch) > 0:
+                            pitch_scaler.partial_fit(pitch.reshape((-1, 1)))
+                        if len(energy) > 0:
+                            energy_scaler.partial_fit(energy.reshape((-1, 1)))
 
-                            if len(pitch) > 0:
-                                pitch_scaler.partial_fit(pitch.reshape((-1, 1)))
-                            if len(energy) > 0:
-                                energy_scaler.partial_fit(energy.reshape((-1, 1)))
-
-                            n_frames += n
+                        n_frames += num_mels
 
         print("Computing statistic quantities ...")
         # Perform normalization if necessary
@@ -129,9 +143,9 @@ class Preprocessor:
         random.shuffle(out)
         out = [r for r in out if r is not None]
 
-        # Write metadata
+        # Write metadata, we use it directly as labels to train the model
         with open(os.path.join(self.out_dir, "train.txt"), "w", encoding="utf-8") as f:
-            for m in out[self.val_size :]:
+            for m in out[self.val_size:]:
                 f.write(m + "\n")
         with open(os.path.join(self.out_dir, "val.txt"), "w", encoding="utf-8") as f:
             for m in out[: self.val_size]:
@@ -139,47 +153,44 @@ class Preprocessor:
 
         return out
 
-    def process_utterance(self, speaker, basename) -> Tuple[str, np.ndarray, np.ndarray, int]:
+    def process_utterance(self, speaker, basename) -> Optional[Tuple[str, np.ndarray, np.ndarray, int]]:
         wav_path = os.path.join(self.in_dir, speaker, "{}.wav".format(basename))
         text_path = os.path.join(self.in_dir, speaker, "{}.lab".format(basename))
         tg_path = os.path.join(self.out_dir, "TextGrid", speaker, "{}.TextGrid".format(basename))
 
         # Get alignments
         textgrid = tgt.io.read_textgrid(tg_path)
-        phone, duration, start, end = self.get_alignment(
-            textgrid.get_tier_by_name("phones")
-        )
+        # phones, durations, start, end
+        phone, duration, start, end = self.get_alignment(textgrid.get_tier_by_name("phones"))
         text = "{" + " ".join(phone) + "}"
         if start >= end:
             return None
 
-        # Read and trim wav files
-        wav, _ = librosa.load(wav_path)
-        wav = wav[
-            int(self.sampling_rate * start) : int(self.sampling_rate * end)
-        ].astype(np.float32)
+        # load wav files
+        wav_form, _ = librosa.load(wav_path)
+        # trim waveform
+        wav_form = wav_form[int(self.sampling_rate * start): int(self.sampling_rate * end)].astype(np.float32)
 
         # Read raw text
         with open(text_path, "r") as f:
+            # string of pinyins, split with space
             raw_text = f.readline().strip("\n")
 
         # Compute fundamental frequency
-        pitch, t = pw.dio(
-            wav.astype(np.float64),
-            self.sampling_rate,
-            frame_period=self.hop_length / self.sampling_rate * 1000,
-        )
-        pitch = pw.stonemask(wav.astype(np.float64), pitch, t, self.sampling_rate)
-
+        pitch, t = pw.dio(wav_form.astype(np.float64),
+                          self.sampling_rate,
+                          frame_period=self.hop_length / self.sampling_rate * 1000)
+        pitch = pw.stonemask(wav_form.astype(np.float64), pitch, t, self.sampling_rate)
         pitch = pitch[: sum(duration)]
         if np.sum(pitch != 0) <= 1:
             return None
 
         # Compute mel-scale spectrogram and energy
-        mel_spectrogram, energy = Audio.tools.get_mel_from_wav(wav, self.STFT)
+        mel_spectrogram, energy = Audio.tools.get_mel_from_wav(wav_form, self.STFT)
         mel_spectrogram = mel_spectrogram[:, : sum(duration)]
         energy = energy[: sum(duration)]
 
+        # interpolate pitch array
         if self.pitch_phoneme_averaging:
             # perform linear interpolation
             nonzero_ids = np.where(pitch != 0)[0]
@@ -195,45 +206,41 @@ class Preprocessor:
             pos = 0
             for i, d in enumerate(duration):
                 if d > 0:
-                    pitch[i] = np.mean(pitch[pos : pos + d])
+                    pitch[i] = np.mean(pitch[pos: pos + d])
                 else:
                     pitch[i] = 0
                 pos += d
             pitch = pitch[: len(duration)]
 
+        # Phoneme-level average energy
         if self.energy_phoneme_averaging:
-            # Phoneme-level average
             pos = 0
             for i, d in enumerate(duration):
                 if d > 0:
-                    energy[i] = np.mean(energy[pos : pos + d])
+                    energy[i] = np.mean(energy[pos: pos + d])
                 else:
                     energy[i] = 0
                 pos += d
             energy = energy[: len(duration)]
 
-        # Save files
-        dur_filename = "{}-duration-{}.npy".format(speaker, basename)
+        # Save Characteristics(duration, pitch, energy, mel) of each phones to files
+        dur_filename = f"{speaker}-duration-{basename}.npy"
         np.save(os.path.join(self.out_dir, "duration", dur_filename), duration)
 
-        pitch_filename = "{}-pitch-{}.npy".format(speaker, basename)
+        pitch_filename = f"{speaker}-pitch-{basename}.npy"
         np.save(os.path.join(self.out_dir, "pitch", pitch_filename), pitch)
 
-        energy_filename = "{}-energy-{}.npy".format(speaker, basename)
+        energy_filename = f"{speaker}-energy-{basename}.npy"
         np.save(os.path.join(self.out_dir, "energy", energy_filename), energy)
 
-        mel_filename = "{}-mel-{}.npy".format(speaker, basename)
-        np.save(
-            os.path.join(self.out_dir, "mel", mel_filename),
-            mel_spectrogram.T,
-        )
+        mel_filename = f"{speaker}-mel-{basename}.npy"
+        np.save(os.path.join(self.out_dir, "mel", mel_filename), mel_spectrogram.T)
 
-        return (
-            "|".join([basename, speaker, text, raw_text]),
-            self.remove_outlier(pitch),
-            self.remove_outlier(energy),
-            mel_spectrogram.shape[1],
-        )
+        info = "|".join([basename, speaker, text, raw_text])
+        pitch = self.remove_outlier(pitch)
+        energy = self.remove_outlier(energy)
+        mel_len = mel_spectrogram.shape[1]
+        return info, pitch, energy, mel_len
 
     def get_alignment(self, tier):
         sil_phones = ["sil", "sp", "spn"]
@@ -263,10 +270,7 @@ class Preprocessor:
                 phones.append(p)
 
             durations.append(
-                int(
-                    np.round(e * self.sampling_rate / self.hop_length)
-                    - np.round(s * self.sampling_rate / self.hop_length)
-                )
+                int(np.round(e * self.sampling_rate / self.hop_length) - np.round(s * self.sampling_rate / self.hop_length))
             )
 
         # Trim tailing silences

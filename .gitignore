@@ -117,3 +117,8 @@ output/
 TextGrid/
 hifigan/*.pth.tar
 /AISHELL-3/
+/GenshinVoiceRaw/
+/speechdata.zip
+/bachong.zip
+/GenshinVoice/
+*.zip
