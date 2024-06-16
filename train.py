@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from utils.model import get_model, get_vocoder, get_param_num
+from model.model import get_model, get_vocoder, get_param_num
 from utils.tools import to_device, log, synth_one_sample
 from model import FastSpeech2Loss
 from dataset import Dataset
@@ -20,13 +20,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main(args, configs):
     print("Prepare training ...")
-
     preprocess_config, model_config, train_config = configs
 
     # Get dataset
-    dataset = Dataset(
-        "train.txt", preprocess_config, train_config, sort=True, drop_last=True
-    )
+    dataset = Dataset("train.txt", preprocess_config, train_config, sort=True, drop_last=True)
     batch_size = train_config["optimizer"]["batch_size"]
     group_size = 4  # Set this larger than 1 to enable sorting in Dataset
     assert batch_size * group_size < len(dataset)
@@ -38,7 +35,11 @@ def main(args, configs):
     )
 
     # Prepare model
-    model, optimizer = get_model(args, configs, device, train=True)
+    model, optimizer = get_model(args, device, train=True,
+                                 preprocess_config=preprocess_config,
+                                 model_config=model_config,
+                                 train_config=train_config)
+
     model = nn.DataParallel(model)
     num_param = get_param_num(model)
     Loss = FastSpeech2Loss(preprocess_config, model_config).to(device)
@@ -141,7 +142,11 @@ def main(args, configs):
 
                 if step % val_step == 0:
                     model.eval()
-                    message = evaluate(model, step, configs, val_logger, vocoder)
+                    message = evaluate(model, step, val_logger, vocoder,
+                                       preprocess_config=preprocess_config,
+                                       model_config=model_config,
+                                       train_config=train_config)
+
                     with open(os.path.join(val_log_path, "log.txt"), "a") as f:
                         f.write(message + "\n")
                     outer_bar.write(message)

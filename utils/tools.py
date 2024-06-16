@@ -141,7 +141,7 @@ def synth_one_sample(targets, predictions, vocoder, model_config, preprocess_con
     )
 
     if vocoder is not None:
-        from .model import vocoder_infer
+        from model.model import vocoder_infer
 
         wav_reconstruction = vocoder_infer(
             mel_target.unsqueeze(0),
@@ -197,7 +197,7 @@ def synth_samples(targets, predictions, vocoder, model_config, preprocess_config
         plt.savefig(os.path.join(path, "{}.png".format(basename)))
         plt.close()
 
-    from .model import vocoder_infer
+    from model.model import vocoder_infer
 
     mel_predictions = predictions[1].transpose(1, 2)
     lengths = predictions[9] * preprocess_config["preprocessing"]["stft"]["hop_length"]
