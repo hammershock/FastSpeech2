@@ -1,5 +1,7 @@
 """ from https://github.com/keithito/tacotron """
 import re
+from typing import List, Callable
+
 from text import cleaners
 from text.symbols import symbols
 
@@ -12,7 +14,7 @@ _id_to_symbol = {i: s for i, s in enumerate(symbols)}
 _curly_re = re.compile(r"(.*?)\{(.+?)\}(.*)")
 
 
-def text_to_sequence(text, cleaner_names):
+def text_to_sequence(text: str, cleaner_names: List[str]) -> List[int]:
     """Converts a string of text to a sequence of IDs corresponding to the symbols in the text.
 
     The text can optionally have ARPAbet sequences enclosed in curly braces embedded
@@ -20,7 +22,7 @@ def text_to_sequence(text, cleaner_names):
 
     Args:
       text: string to convert to a sequence
-      cleaner_names: names of the cleaner functions to run the text through
+      cleaner_names: names of the cleaner functions to run the text through, see functions in Module text/cleaners.py.
 
     Returns:
       List of integers corresponding to the symbols in the text
@@ -34,9 +36,11 @@ def text_to_sequence(text, cleaner_names):
         if not m:
             sequence += _symbols_to_sequence(_clean_text(text, cleaner_names))
             break
-        sequence += _symbols_to_sequence(_clean_text(m.group(1), cleaner_names))
-        sequence += _arpabet_to_sequence(m.group(2))
-        text = m.group(3)
+
+        g1, g2, g3 = m.group(1), m.group(2), m.group(3)
+        sequence += _symbols_to_sequence(_clean_text(g1, cleaner_names))
+        sequence += _arpabet_to_sequence(g2)
+        text = g3
 
     return sequence
 

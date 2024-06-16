@@ -6,6 +6,7 @@ import torch
 import numpy as np
 
 import hifigan
+from hifigan import Generator
 from model import FastSpeech2, ScheduledOptim
 
 from typings_ import PreprocessConfig, ModelConfig, TrainConfig
@@ -18,6 +19,7 @@ def get_model(args, device, train=False,
 
     model = FastSpeech2(preprocess_config, model_config).to(device)
 
+    # restore from checkpoint
     if args.restore_step:
         ckpt_path = os.path.join(train_config["path"]["ckpt_path"], f"{args.restore_step}.pth.tar")
         ckpt = torch.load(ckpt_path)
@@ -27,6 +29,7 @@ def get_model(args, device, train=False,
         model.train()
         scheduled_optim = ScheduledOptim(model, train_config, model_config, args.restore_step)
         if args.restore_step:
+            # restore optimizer
             scheduled_optim.load_state_dict(ckpt["optimizer"])
 
         return model, scheduled_optim
@@ -41,7 +44,7 @@ def get_param_num(model):
     return num_param
 
 
-def get_vocoder(config: ModelConfig, device):
+def get_vocoder(config: ModelConfig, device) -> Generator:
     name = config["vocoder"]["model"]
     speaker = config["vocoder"]["speaker"]
 

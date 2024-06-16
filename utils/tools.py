@@ -1,5 +1,6 @@
 import os
 import json
+from typing import List
 
 import torch
 import torch.nn.functional as F
@@ -89,11 +90,34 @@ def log(
 
 
 def get_mask_from_lengths(lengths, max_len=None):
+    """
+    Generate a mask tensor based on sequence lengths.
+
+    Args:
+        lengths (torch.Tensor): A tensor of shape (batch_size,) containing the lengths of each sequence in the batch.
+        max_len (int, optional): The maximum length of the sequences. If None, it will be set to the maximum value in `lengths`.
+
+    Returns:
+        torch.Tensor: A boolean mask tensor of shape (batch_size, max_len) where each position is True if the corresponding
+                      position in the sequence is a padding (i.e., outside the length of the sequence) and False otherwise.
+
+    Example:
+        >>> lengths = torch.tensor([5, 3, 2])
+        >>> get_mask_from_lengths(lengths)
+        tensor([[False, False, False, False, False],
+                [False, False, False,  True,  True],
+                [False, False,  True,  True,  True]])
+
+        >>> get_mask_from_lengths(lengths, max_len=4)
+        tensor([[False, False, False, False],
+                [False, False, False,  True],
+                [False, False,  True,  True]])
+    """
     batch_size = lengths.shape[0]
     if max_len is None:
         max_len = torch.max(lengths).item()
 
-    ids = torch.arange(0, max_len).unsqueeze(0).expand(batch_size, -1).to(device)
+    ids = torch.arange(0, max_len).unsqueeze(0).expand(batch_size, -1).to(lengths.device)
     mask = ids >= lengths.unsqueeze(1).expand(-1, max_len)
 
     return mask
@@ -161,53 +185,57 @@ def synth_one_sample(targets, predictions, vocoder, model_config, preprocess_con
     return fig, wav_reconstruction, wav_prediction, basename
 
 
-def synth_samples(targets, predictions, vocoder, model_config, preprocess_config, path):
-
+def synth_samples(targets, predictions, vocoder, model_config, preprocess_config, output_dir) -> None:
+    # use the text line as the basename of the output file
     basenames = targets[0]
-    for i in range(len(predictions[0])):
-        basename = basenames[i]
-        src_len = predictions[8][i].item()
-        mel_len = predictions[9][i].item()
-        mel_prediction = predictions[1][i, :mel_len].detach().transpose(0, 1)
-        duration = predictions[5][i, :src_len].detach().cpu().numpy()
-        if preprocess_config["preprocessing"]["pitch"]["feature"] == "phoneme_level":
-            pitch = predictions[2][i, :src_len].detach().cpu().numpy()
-            pitch = expand(pitch, duration)
-        else:
-            pitch = predictions[2][i, :mel_len].detach().cpu().numpy()
-        if preprocess_config["preprocessing"]["energy"]["feature"] == "phoneme_level":
-            energy = predictions[3][i, :src_len].detach().cpu().numpy()
-            energy = expand(energy, duration)
-        else:
-            energy = predictions[3][i, :mel_len].detach().cpu().numpy()
 
-        with open(
-            os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
-        ) as f:
-            stats = json.load(f)
-            stats = stats["pitch"] + stats["energy"][:2]
+    # # plot and Save Mel-Spectrogram
+    # # predictions[0]: torch.Tensor [batch, mel_len, num_mels=80]
+    # batch_size = len(predictions[0])
+    # for i in range(batch_size):
+    #     basename = basenames[i]
+    #     src_len = predictions[8][i].item()  # src_seq_len
+    #     mel_len = predictions[9][i].item()  # mel_output_len
+    #     mel_prediction = predictions[1][i, :mel_len].detach().transpose(0, 1)  # mel output: torch.Tensor [batch, mel_len, num_mels]
+    #     duration = predictions[5][i, :src_len].detach().cpu().numpy()  # np.array: [num_phoneme, 1]
+    #     if preprocess_config["preprocessing"]["pitch"]["feature"] == "phoneme_level":
+    #         pitch = predictions[2][i, :src_len].detach().cpu().numpy()  # np.array: [num_phoneme, ]
+    #         pitch = expand(pitch, duration)  # [mel_len, ]
+    #     else:  # mel_level
+    #         pitch = predictions[2][i, :mel_len].detach().cpu().numpy()
+    #     if preprocess_config["preprocessing"]["energy"]["feature"] == "phoneme_level":
+    #         energy = predictions[3][i, :src_len].detach().cpu().numpy()  # np.array: [num_phoneme, ]
+    #         energy = expand(energy, duration)  # [mel_len, ]
+    #     else:  # mel_level
+    #         energy = predictions[3][i, :mel_len].detach().cpu().numpy()
+    #
+    #     # load dataset stats
+    #     stats_path = os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
+    #     with open(stats_path, 'r') as f:
+    #         stats = json.load(f)
+    #         stats = stats["pitch"] + stats["energy"][:2]
+    #
+    #     # plot Synthesized Mel-Spectrogram
+    #     fig = plot_mel([(mel_prediction.cpu().numpy(), pitch, energy)], stats, ["Synthesized Spectrogram"])
+    #
+    #     # plot output path
+    #     os.makedirs(output_dir, exist_ok=True)
+    #     save_path_fig = os.path.join(output_dir, f"{basename}.png")
+    #     plt.savefig(save_path_fig)
+    #     plt.close()
 
-        fig = plot_mel(
-            [
-                (mel_prediction.cpu().numpy(), pitch, energy),
-            ],
-            stats,
-            ["Synthetized Spectrogram"],
-        )
-        plt.savefig(os.path.join(path, "{}.png".format(basename)))
-        plt.close()
-
+    # Vocode mel-spec to wav
+    # mel_len -> mel_len * hop_length
     from model.model import vocoder_infer
 
     mel_predictions = predictions[1].transpose(1, 2)
     lengths = predictions[9] * preprocess_config["preprocessing"]["stft"]["hop_length"]
-    wav_predictions = vocoder_infer(
-        mel_predictions, vocoder, model_config, preprocess_config, lengths=lengths
-    )
+    wav_predictions: List[np.ndarray] = vocoder_infer(mel_predictions, vocoder, model_config, preprocess_config, lengths=lengths)
 
-    sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
+    sampling_rate: int = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
     for wav, basename in zip(wav_predictions, basenames):
-        wavfile.write(os.path.join(path, "{}.wav".format(basename)), sampling_rate, wav)
+        save_path_wav = os.path.join(output_dir, f"{basename}.wav")
+        wavfile.write(save_path_wav, rate=sampling_rate, data=wav)
 
 
 def plot_mel(data, stats, titles):
