@@ -14,6 +14,7 @@ from model import FastSpeech2Loss
 from dataset import Dataset
 
 from evaluate import evaluate
+from io_ import load_config
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -174,30 +175,23 @@ def main(args, configs):
         epoch += 1
 
 
-if __name__ == "__main__":
+def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("--restore_step", type=int, default=0)
-    parser.add_argument(
-        "-p",
-        "--preprocess_config",
-        type=str,
-        required=True,
-        help="path to preprocess.yaml",
-    )
-    parser.add_argument(
-        "-m", "--model_config", type=str, required=True, help="path to model.yaml"
-    )
-    parser.add_argument(
-        "-t", "--train_config", type=str, required=True, help="path to train.yaml"
-    )
+    parser.add_argument("-p", "--preprocess_config", type=str, required=True, help="path to preprocess.yaml",)
+    parser.add_argument("-m", "--model_config", type=str, required=True, help="path to model.yaml")
+    parser.add_argument("-t", "--train_config", type=str, required=True, help="path to train.yaml")
     args = parser.parse_args()
+    return args
 
-    # Read Config
-    preprocess_config = yaml.load(
-        open(args.preprocess_config, "r"), Loader=yaml.FullLoader
-    )
-    model_config = yaml.load(open(args.model_config, "r"), Loader=yaml.FullLoader)
-    train_config = yaml.load(open(args.train_config, "r"), Loader=yaml.FullLoader)
+
+if __name__ == "__main__":
+    args = parse_arguments()
+
+    # Load Configs
+    preprocess_config = load_config(args.preprocess_config)
+    model_config = load_config(args.model_config)
+    train_config = load_config(args.train_config)
     configs = (preprocess_config, model_config, train_config)
 
     main(args, configs)
