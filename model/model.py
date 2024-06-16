@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Union, Tuple
+from typing import Union, Tuple, List
 
 import torch
 import numpy as np
@@ -72,13 +72,13 @@ def get_vocoder(config: ModelConfig, device) -> Generator:
     return vocoder
 
 
-def vocoder_infer(mels, vocoder, model_config, preprocess_config, lengths=None):
+@torch.no_grad()
+def vocoder_infer(mels, vocoder, model_config, preprocess_config, lengths=None) -> List[np.ndarray]:
     name = model_config["vocoder"]["model"]
-    with torch.no_grad():
-        if name == "MelGAN":
-            wavs = vocoder.inverse(mels / np.log(10))
-        elif name == "HiFi-GAN":
-            wavs = vocoder(mels).squeeze(1)
+    if name == "MelGAN":
+        wavs = vocoder.inverse(mels / np.log(10))
+    elif name == "HiFi-GAN":
+        wavs = vocoder(mels).squeeze(1)
 
     max_wav_value = preprocess_config["preprocessing"]["audio"]["max_wav_value"]
     wavs = (wavs.cpu().numpy() * max_wav_value).astype(np.int16)

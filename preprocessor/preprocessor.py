@@ -1,6 +1,7 @@
 import os
 import random
 import json
+from typing import Tuple
 
 import tgt
 import librosa
@@ -63,31 +64,32 @@ class Preprocessor:
         energy_scaler = StandardScaler()
 
         # Compute pitch, energy, duration, and mel-spectrogram
-        speakers = {}
-        for i, speaker in enumerate(tqdm(os.listdir(self.in_dir))):
-            speakers[speaker] = i
-            for wav_name in os.listdir(os.path.join(self.in_dir, speaker)):
-                if ".wav" not in wav_name:
-                    continue
 
-                basename = wav_name.split(".")[0]
-                tg_path = os.path.join(
-                    self.out_dir, "TextGrid", speaker, "{}.TextGrid".format(basename)
-                )
-                if os.path.exists(tg_path):
-                    ret = self.process_utterance(speaker, basename)
-                    if ret is None:
-                        continue
-                    else:
-                        info, pitch, energy, n = ret
-                    out.append(info)
+        speaker_names = [speaker for speaker in os.listdir(self.in_dir) if os.path.isdir(os.path.join(self.in_dir, speaker))]
+        speakers = {speaker: idx for idx, speaker in enumerate(speaker_names)}
 
-                if len(pitch) > 0:
-                    pitch_scaler.partial_fit(pitch.reshape((-1, 1)))
-                if len(energy) > 0:
-                    energy_scaler.partial_fit(energy.reshape((-1, 1)))
+        for idx, speaker in enumerate(speaker_names):
+            speaker_dir = os.path.join(self.in_dir, speaker)
+            wav_files = [wav_name for wav_name in os.listdir(speaker_dir) if wav_name.endswith(".wav")]
 
-                n_frames += n
+            for wav_name in tqdm(wav_files, desc=f"Processing speaker {idx}/{len(speakers)}: {speaker}", total=len(wav_files)):
+                if wav_name.endswith(".wav"):
+                    data_id = wav_name.split(".")[0]  # 'SSB04260041'
+                    # './preprocessed_data/AISHELL3/TextGrid/SSB0426/SSB04260371.TextGrid'
+                    tg_path = os.path.join(self.out_dir, "TextGrid", speaker, f"{data_id}.TextGrid")
+
+                    if os.path.exists(tg_path):
+                        ret = self.process_utterance(speaker, data_id)
+                        if ret is not None:
+                            info, pitch, energy, n = ret
+                            out.append(info)
+
+                            if len(pitch) > 0:
+                                pitch_scaler.partial_fit(pitch.reshape((-1, 1)))
+                            if len(energy) > 0:
+                                energy_scaler.partial_fit(energy.reshape((-1, 1)))
+
+                            n_frames += n
 
         print("Computing statistic quantities ...")
         # Perform normalization if necessary
@@ -105,40 +107,25 @@ class Preprocessor:
             energy_mean = 0
             energy_std = 1
 
-        pitch_min, pitch_max = self.normalize(
-            os.path.join(self.out_dir, "pitch"), pitch_mean, pitch_std
-        )
-        energy_min, energy_max = self.normalize(
-            os.path.join(self.out_dir, "energy"), energy_mean, energy_std
-        )
+        pitch_dir = os.path.join(self.out_dir, "pitch")
+        pitch_min, pitch_max = self.normalize(pitch_dir, pitch_mean, pitch_std)
+        energy_dir = os.path.join(self.out_dir, "energy")
+        energy_min, energy_max = self.normalize(energy_dir, energy_mean, energy_std)
 
         # Save files
         with open(os.path.join(self.out_dir, "speakers.json"), "w") as f:
             f.write(json.dumps(speakers))
 
+        pitch_stats = [pitch_min, pitch_max, pitch_mean, pitch_std]
+        energy_stats = [energy_min, energy_max, energy_mean, energy_std]
+
         with open(os.path.join(self.out_dir, "stats.json"), "w") as f:
-            stats = {
-                "pitch": [
-                    float(pitch_min),
-                    float(pitch_max),
-                    float(pitch_mean),
-                    float(pitch_std),
-                ],
-                "energy": [
-                    float(energy_min),
-                    float(energy_max),
-                    float(energy_mean),
-                    float(energy_std),
-                ],
-            }
-            f.write(json.dumps(stats))
+            stats = {"pitch": np.array(pitch_stats, dtype=float).tolist(),
+                     "energy": np.array(energy_stats, dtype=float).tolist()}
+            json.dump(stats, f)
 
-        print(
-            "Total time: {} hours".format(
-                n_frames * self.hop_length / self.sampling_rate / 3600
-            )
-        )
-
+        total_time = n_frames * self.hop_length / self.sampling_rate / 3600
+        print(f"Total time: {total_time} hours")
         random.shuffle(out)
         out = [r for r in out if r is not None]
 
@@ -152,12 +139,10 @@ class Preprocessor:
 
         return out
 
-    def process_utterance(self, speaker, basename):
+    def process_utterance(self, speaker, basename) -> Tuple[str, np.ndarray, np.ndarray, int]:
         wav_path = os.path.join(self.in_dir, speaker, "{}.wav".format(basename))
         text_path = os.path.join(self.in_dir, speaker, "{}.lab".format(basename))
-        tg_path = os.path.join(
-            self.out_dir, "TextGrid", speaker, "{}.TextGrid".format(basename)
-        )
+        tg_path = os.path.join(self.out_dir, "TextGrid", speaker, "{}.TextGrid".format(basename))
 
         # Get alignments
         textgrid = tgt.io.read_textgrid(tg_path)

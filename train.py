@@ -19,21 +19,15 @@ from io_ import load_config
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def main(args, configs):
+def main(args, preprocess_config, model_config, train_config):
     print("Prepare training ...")
-    preprocess_config, model_config, train_config = configs
 
     # Get dataset
     dataset = Dataset("train.txt", preprocess_config, train_config, sort=True, drop_last=True)
     batch_size = train_config["optimizer"]["batch_size"]
     group_size = 4  # Set this larger than 1 to enable sorting in Dataset
     assert batch_size * group_size < len(dataset)
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size * group_size,
-        shuffle=True,
-        collate_fn=dataset.collate_fn,
-    )
+    loader = DataLoader(dataset, batch_size=batch_size * group_size, shuffle=True, collate_fn=dataset.collate_fn)
 
     # Prepare model
     model, optimizer = get_model(args, device, train=True,
@@ -43,7 +37,7 @@ def main(args, configs):
 
     model = nn.DataParallel(model)
     num_param = get_param_num(model)
-    Loss = FastSpeech2Loss(preprocess_config, model_config).to(device)
+    criterion = FastSpeech2Loss(preprocess_config, model_config).to(device)
     print("Number of FastSpeech2 Parameters:", num_param)
 
     # Load vocoder
@@ -52,12 +46,12 @@ def main(args, configs):
     # Init logger
     for p in train_config["path"].values():
         os.makedirs(p, exist_ok=True)
-    train_log_path = os.path.join(train_config["path"]["log_path"], "train")
-    val_log_path = os.path.join(train_config["path"]["log_path"], "val")
-    os.makedirs(train_log_path, exist_ok=True)
-    os.makedirs(val_log_path, exist_ok=True)
-    train_logger = SummaryWriter(train_log_path)
-    val_logger = SummaryWriter(val_log_path)
+    train_log_dir = os.path.join(train_config["path"]["log_path"], "train")
+    val_log_dir = os.path.join(train_config["path"]["log_path"], "val")
+    os.makedirs(train_log_dir, exist_ok=True)
+    os.makedirs(val_log_dir, exist_ok=True)
+    train_logger = SummaryWriter(train_log_dir)
+    val_logger = SummaryWriter(val_log_dir)
 
     # Training
     step = args.restore_step + 1
@@ -79,17 +73,18 @@ def main(args, configs):
         for batchs in loader:
             for batch in batchs:
                 batch = to_device(batch, device)
-
                 # Forward
                 output = model(*(batch[2:]))
 
                 # Cal Loss
-                losses = Loss(batch, output)
+                losses = criterion(batch, output)
                 total_loss = losses[0]
 
                 # Backward
                 total_loss = total_loss / grad_acc_step
                 total_loss.backward()
+
+                # accumulate gradient
                 if step % grad_acc_step == 0:
                     # Clipping gradients to avoid gradient explosion
                     nn.utils.clip_grad_norm_(model.parameters(), grad_clip_thresh)
@@ -101,15 +96,12 @@ def main(args, configs):
                 if step % log_step == 0:
                     losses = [l.item() for l in losses]
                     message1 = "Step {}/{}, ".format(step, total_step)
-                    message2 = "Total Loss: {:.4f}, Mel Loss: {:.4f}, Mel PostNet Loss: {:.4f}, Pitch Loss: {:.4f}, Energy Loss: {:.4f}, Duration Loss: {:.4f}".format(
-                        *losses
-                    )
-
-                    with open(os.path.join(train_log_path, "log.txt"), "a") as f:
+                    message2 = "Total Loss: {:.4f}, Mel Loss: {:.4f}, Mel PostNet Loss: {:.4f}, Pitch Loss: {:.4f}, Energy Loss: {:.4f}, Duration Loss: {:.4f}".format(*losses)
+                    train_log_path = os.path.join(train_log_dir, "log.txt")
+                    with open(train_log_path, "a") as f:
                         f.write(message1 + message2 + "\n")
 
                     outer_bar.write(message1 + message2)
-
                     log(train_logger, step, losses=losses)
 
                 if step % synth_step == 0:
@@ -120,26 +112,11 @@ def main(args, configs):
                         model_config,
                         preprocess_config,
                     )
-                    log(
-                        train_logger,
-                        fig=fig,
-                        tag="Training/step_{}_{}".format(step, tag),
-                    )
-                    sampling_rate = preprocess_config["preprocessing"]["audio"][
-                        "sampling_rate"
-                    ]
-                    log(
-                        train_logger,
-                        audio=wav_reconstruction,
-                        sampling_rate=sampling_rate,
-                        tag="Training/step_{}_{}_reconstructed".format(step, tag),
-                    )
-                    log(
-                        train_logger,
-                        audio=wav_prediction,
-                        sampling_rate=sampling_rate,
-                        tag="Training/step_{}_{}_synthesized".format(step, tag),
-                    )
+
+                    log(train_logger, fig=fig, tag="Training/step_{}_{}".format(step, tag))
+                    sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
+                    log(train_logger, audio=wav_reconstruction, sampling_rate=sampling_rate, tag="Training/step_{}_{}_reconstructed".format(step, tag))
+                    log(train_logger, audio=wav_prediction, sampling_rate=sampling_rate, tag="Training/step_{}_{}_synthesized".format(step, tag))
 
                 if step % val_step == 0:
                     model.eval()
@@ -148,23 +125,16 @@ def main(args, configs):
                                        model_config=model_config,
                                        train_config=train_config)
 
-                    with open(os.path.join(val_log_path, "log.txt"), "a") as f:
+                    with open(os.path.join(val_log_dir, "log.txt"), "a") as f:
                         f.write(message + "\n")
                     outer_bar.write(message)
 
                     model.train()
 
                 if step % save_step == 0:
-                    torch.save(
-                        {
-                            "model": model.module.state_dict(),
-                            "optimizer": optimizer._optimizer.state_dict(),
-                        },
-                        os.path.join(
-                            train_config["path"]["ckpt_path"],
-                            "{}.pth.tar".format(step),
-                        ),
-                    )
+                    obj = {"model": model.module.state_dict(), "optimizer": optimizer._optimizer.state_dict()}
+                    save_path = os.path.join(train_config["path"]["ckpt_path"], f"{step}.pth.tar")
+                    torch.save(obj, save_path),
 
                 if step == total_step:
                     quit()
@@ -192,6 +162,5 @@ if __name__ == "__main__":
     preprocess_config = load_config(args.preprocess_config)
     model_config = load_config(args.model_config)
     train_config = load_config(args.train_config)
-    configs = (preprocess_config, model_config, train_config)
 
-    main(args, configs)
+    main(args, preprocess_config, model_config, train_config)

@@ -189,40 +189,40 @@ def synth_samples(targets, predictions, vocoder, model_config, preprocess_config
     # use the text line as the basename of the output file
     basenames = targets[0]
 
-    # # plot and Save Mel-Spectrogram
-    # # predictions[0]: torch.Tensor [batch, mel_len, num_mels=80]
-    # batch_size = len(predictions[0])
-    # for i in range(batch_size):
-    #     basename = basenames[i]
-    #     src_len = predictions[8][i].item()  # src_seq_len
-    #     mel_len = predictions[9][i].item()  # mel_output_len
-    #     mel_prediction = predictions[1][i, :mel_len].detach().transpose(0, 1)  # mel output: torch.Tensor [batch, mel_len, num_mels]
-    #     duration = predictions[5][i, :src_len].detach().cpu().numpy()  # np.array: [num_phoneme, 1]
-    #     if preprocess_config["preprocessing"]["pitch"]["feature"] == "phoneme_level":
-    #         pitch = predictions[2][i, :src_len].detach().cpu().numpy()  # np.array: [num_phoneme, ]
-    #         pitch = expand(pitch, duration)  # [mel_len, ]
-    #     else:  # mel_level
-    #         pitch = predictions[2][i, :mel_len].detach().cpu().numpy()
-    #     if preprocess_config["preprocessing"]["energy"]["feature"] == "phoneme_level":
-    #         energy = predictions[3][i, :src_len].detach().cpu().numpy()  # np.array: [num_phoneme, ]
-    #         energy = expand(energy, duration)  # [mel_len, ]
-    #     else:  # mel_level
-    #         energy = predictions[3][i, :mel_len].detach().cpu().numpy()
-    #
-    #     # load dataset stats
-    #     stats_path = os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
-    #     with open(stats_path, 'r') as f:
-    #         stats = json.load(f)
-    #         stats = stats["pitch"] + stats["energy"][:2]
-    #
-    #     # plot Synthesized Mel-Spectrogram
-    #     fig = plot_mel([(mel_prediction.cpu().numpy(), pitch, energy)], stats, ["Synthesized Spectrogram"])
-    #
-    #     # plot output path
-    #     os.makedirs(output_dir, exist_ok=True)
-    #     save_path_fig = os.path.join(output_dir, f"{basename}.png")
-    #     plt.savefig(save_path_fig)
-    #     plt.close()
+    # plot and Save Mel-Spectrogram
+    # predictions[0]: torch.Tensor [batch, mel_len, num_mels=80]
+    batch_size = len(predictions[0])
+    for i in range(batch_size):
+        basename = basenames[i]
+        src_len = predictions[8][i].item()  # src_seq_len
+        mel_len = predictions[9][i].item()  # mel_output_len
+        mel_prediction = predictions[1][i, :mel_len].detach().transpose(0, 1)  # mel output: torch.Tensor [batch, mel_len, num_mels]
+        duration = predictions[5][i, :src_len].detach().cpu().numpy()  # np.array: [num_phoneme, 1]
+        if preprocess_config["preprocessing"]["pitch"]["feature"] == "phoneme_level":
+            pitch = predictions[2][i, :src_len].detach().cpu().numpy()  # np.array: [num_phoneme, ]
+            pitch = expand(pitch, duration)  # [mel_len, ]
+        else:  # mel_level
+            pitch = predictions[2][i, :mel_len].detach().cpu().numpy()
+        if preprocess_config["preprocessing"]["energy"]["feature"] == "phoneme_level":
+            energy = predictions[3][i, :src_len].detach().cpu().numpy()  # np.array: [num_phoneme, ]
+            energy = expand(energy, duration)  # [mel_len, ]
+        else:  # mel_level
+            energy = predictions[3][i, :mel_len].detach().cpu().numpy()
+
+        # load dataset stats
+        stats_path = os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
+        with open(stats_path, 'r') as f:
+            stats = json.load(f)
+            stats = stats["pitch"] + stats["energy"][:2]
+
+        # plot Synthesized Mel-Spectrogram
+        fig = plot_mel([(mel_prediction.cpu().numpy(), pitch, energy)], stats, ["Synthesized Spectrogram"])
+
+        # plot output path
+        os.makedirs(output_dir, exist_ok=True)
+        save_path_fig = os.path.join(output_dir, f"{basename}.png")
+        plt.savefig(save_path_fig)
+        plt.close()
 
     # Vocode mel-spec to wav
     # mel_len -> mel_len * hop_length
@@ -310,9 +310,7 @@ def pad_2D(inputs, maxlen=None):
             raise ValueError("not max_len")
 
         s = np.shape(x)[1]
-        x_padded = np.pad(
-            x, (0, max_len - np.shape(x)[0]), mode="constant", constant_values=PAD
-        )
+        x_padded = np.pad(x, (0, max_len - np.shape(x)[0]), mode="constant", constant_values=PAD)
         return x_padded[:, :s]
 
     if maxlen:
@@ -333,13 +331,10 @@ def pad(input_ele, mel_max_length=None):
     out_list = list()
     for i, batch in enumerate(input_ele):
         if len(batch.shape) == 1:
-            one_batch_padded = F.pad(
-                batch, (0, max_len - batch.size(0)), "constant", 0.0
-            )
+            one_batch_padded = F.pad(batch, (0, max_len - batch.size(0)), "constant", 0.0)
         elif len(batch.shape) == 2:
-            one_batch_padded = F.pad(
-                batch, (0, 0, 0, max_len - batch.size(0)), "constant", 0.0
-            )
+            one_batch_padded = F.pad(batch, (0, 0, 0, max_len - batch.size(0)), "constant", 0.0)
         out_list.append(one_batch_padded)
     out_padded = torch.stack(out_list)
     return out_padded
+

@@ -6,21 +6,17 @@ import numpy as np
 from torch.utils.data import Dataset
 
 from text import text_to_sequence
-from utils.tools import pad_1D, pad_2D
+from utils.tools import pad_1D, pad_2D, to_device
 
 
 class Dataset(Dataset):
-    def __init__(
-        self, filename, preprocess_config, train_config, sort=False, drop_last=False
-    ):
+    def __init__(self, filename, preprocess_config, train_config, sort=False, drop_last=False):
         self.dataset_name = preprocess_config["dataset"]
         self.preprocessed_path = preprocess_config["path"]["preprocessed_path"]
         self.cleaners = preprocess_config["preprocessing"]["text"]["text_cleaners"]
         self.batch_size = train_config["optimizer"]["batch_size"]
 
-        self.basename, self.speaker, self.text, self.raw_text = self.process_meta(
-            filename
-        )
+        self.basename, self.speaker, self.text, self.raw_text = self.process_meta(filename)
         with open(os.path.join(self.preprocessed_path, "speakers.json")) as f:
             self.speaker_map = json.load(f)
         self.sort = sort
@@ -35,32 +31,19 @@ class Dataset(Dataset):
         speaker_id = self.speaker_map[speaker]
         raw_text = self.raw_text[idx]
         phone = np.array(text_to_sequence(self.text[idx], self.cleaners))
-        mel_path = os.path.join(
-            self.preprocessed_path,
-            "mel",
-            "{}-mel-{}.npy".format(speaker, basename),
-        )
+        mel_path = os.path.join(self.preprocessed_path, "mel", f"{speaker}-mel-{basename}.npy")
         mel = np.load(mel_path)
-        pitch_path = os.path.join(
-            self.preprocessed_path,
-            "pitch",
-            "{}-pitch-{}.npy".format(speaker, basename),
-        )
+
+        pitch_path = os.path.join(self.preprocessed_path, "pitch", f"{speaker}-pitch-{basename}.npy")
         pitch = np.load(pitch_path)
-        energy_path = os.path.join(
-            self.preprocessed_path,
-            "energy",
-            "{}-energy-{}.npy".format(speaker, basename),
-        )
+
+        energy_path = os.path.join(self.preprocessed_path, "energy", f"{speaker}-energy-{basename}.npy")
         energy = np.load(energy_path)
-        duration_path = os.path.join(
-            self.preprocessed_path,
-            "duration",
-            "{}-duration-{}.npy".format(speaker, basename),
-        )
+
+        duration_path = os.path.join(self.preprocessed_path, "duration", f"{speaker}-duration-{basename}.npy")
         duration = np.load(duration_path)
 
-        sample = {
+        data = {
             "id": basename,
             "speaker": speaker_id,
             "text": phone,
@@ -71,12 +54,11 @@ class Dataset(Dataset):
             "duration": duration,
         }
 
-        return sample
+        return data
 
     def process_meta(self, filename):
-        with open(
-            os.path.join(self.preprocessed_path, filename), "r", encoding="utf-8"
-        ) as f:
+        filepath = os.path.join(self.preprocessed_path, filename)
+        with open(filepath, "r", encoding="utf-8") as f:
             name = []
             speaker = []
             text = []
@@ -147,17 +129,13 @@ class Dataset(Dataset):
 
 
 class TextDataset(Dataset):
-    def __init__(self, filepath, preprocess_config):
+    def __init__(self, filepath, preprocess_config, filename, train_config):
         self.cleaners = preprocess_config["preprocessing"]["text"]["text_cleaners"]
 
-        self.basename, self.speaker, self.text, self.raw_text = self.process_meta(
-            filepath
-        )
-        with open(
-            os.path.join(
-                preprocess_config["path"]["preprocessed_path"], "speakers.json"
-            )
-        ) as f:
+        self.basename, self.speaker, self.text, self.raw_text = self.process_meta(filepath)
+
+        filepath = os.path.join(preprocess_config["path"]["preprocessed_path"], "speakers.json")
+        with open(filepath, "r", encoding="utf-8") as f:
             self.speaker_map = json.load(f)
 
     def __len__(self):
@@ -170,7 +148,7 @@ class TextDataset(Dataset):
         raw_text = self.raw_text[idx]
         phone = np.array(text_to_sequence(self.text[idx], self.cleaners))
 
-        return (basename, speaker_id, phone, raw_text)
+        return basename, speaker_id, phone, raw_text
 
     def process_meta(self, filename):
         with open(filename, "r", encoding="utf-8") as f:
@@ -203,22 +181,14 @@ if __name__ == "__main__":
     import torch
     import yaml
     from torch.utils.data import DataLoader
-    from utils.utils import to_device
+    from io_ import load_config
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    preprocess_config = yaml.load(
-        open("./config/LJSpeech/preprocess.yaml", "r"), Loader=yaml.FullLoader
-    )
-    train_config = yaml.load(
-        open("./config/LJSpeech/train.yaml", "r"), Loader=yaml.FullLoader
-    )
+    preprocess_config = load_config("./config/LJSpeech/preprocess.yaml")
+    train_config = load_config("./config/LJSpeech/train.yaml")
 
-    train_dataset = Dataset(
-        "train.txt", preprocess_config, train_config, sort=True, drop_last=True
-    )
-    val_dataset = Dataset(
-        "val.txt", preprocess_config, train_config, sort=False, drop_last=False
-    )
+    train_dataset = Dataset("train.txt", preprocess_config, train_config, sort=True, drop_last=True)
+    val_dataset = Dataset("val.txt", preprocess_config, train_config, sort=False, drop_last=False)
     train_loader = DataLoader(
         train_dataset,
         batch_size=train_config["optimizer"]["batch_size"] * 4,
@@ -237,19 +207,11 @@ if __name__ == "__main__":
         for batch in batchs:
             to_device(batch, device)
             n_batch += 1
-    print(
-        "Training set  with size {} is composed of {} batches.".format(
-            len(train_dataset), n_batch
-        )
-    )
+    print(f"Training set  with size {len(train_dataset)} is composed of {n_batch} batches.")
 
     n_batch = 0
     for batchs in val_loader:
         for batch in batchs:
             to_device(batch, device)
             n_batch += 1
-    print(
-        "Validation set  with size {} is composed of {} batches.".format(
-            len(val_dataset), n_batch
-        )
-    )
+    print(f"Validation set  with size {len(val_dataset)} is composed of {n_batch} batches.")

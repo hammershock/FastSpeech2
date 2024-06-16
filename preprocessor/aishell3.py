@@ -21,15 +21,12 @@ def prepare_align(config):
                 wav_path = os.path.join(in_dir, dataset, "wav", speaker, wav_name)
                 if os.path.exists(wav_path):
                     os.makedirs(os.path.join(out_dir, speaker), exist_ok=True)
-                    wav, _ = librosa.load(wav_path, sampling_rate)
+                    wav, _ = librosa.load(path=wav_path, sr=sampling_rate)
                     wav = wav / max(abs(wav)) * max_wav_value
                     wavfile.write(
                         os.path.join(out_dir, speaker, wav_name),
                         sampling_rate,
                         wav.astype(np.int16),
                     )
-                    with open(
-                        os.path.join(out_dir, speaker, "{}.lab".format(wav_name[:11])),
-                        "w",
-                    ) as f1:
+                    with open(os.path.join(out_dir, speaker, "{}.lab".format(wav_name[:11])), "w") as f1:
                         f1.write(" ".join(text))
