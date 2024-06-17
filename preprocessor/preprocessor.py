@@ -159,8 +159,11 @@ class Preprocessor:
         tg_path = os.path.join(self.out_dir, "TextGrid", speaker, "{}.TextGrid".format(basename))
 
         # Get alignments
-        textgrid = tgt.io.read_textgrid(tg_path)
-        # phones, durations, start, end
+        try:
+            textgrid = tgt.io.read_textgrid(tg_path)
+        except ValueError:
+            return None
+        # phones, durations, start, end  # 12 phones in TextGrid...
         phone, duration, start, end = self.get_alignment(textgrid.get_tier_by_name("phones"))
         text = "{" + " ".join(phone) + "}"
         if start >= end:
@@ -243,7 +246,7 @@ class Preprocessor:
         return info, pitch, energy, mel_len
 
     def get_alignment(self, tier):
-        sil_phones = ["sil", "sp", "spn"]
+        silent_phones = ["sil", "sp", "spn"]
 
         phones = []
         durations = []
@@ -255,12 +258,12 @@ class Preprocessor:
 
             # Trim leading silences
             if phones == []:
-                if p in sil_phones:
-                    continue
+                if p in silent_phones:
+                    continue  # skip silent phones
                 else:
                     start_time = s
 
-            if p not in sil_phones:
+            if p not in silent_phones:
                 # For ordinary phones
                 phones.append(p)
                 end_time = e

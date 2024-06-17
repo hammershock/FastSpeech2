@@ -1,3 +1,5 @@
+# -p ./config/AISHELL3/preprocess.yaml -m ./config/AISHELL3/model.yaml -t ./config/AISHELL3/train.yaml
+# -p ./config/GenshinVoice/preprocess.yaml -m ./config/GenshinVoice/model.yaml -t ./config/GenshinVoice/train.yaml
 import argparse
 import os
 
@@ -64,12 +66,12 @@ def main(args, preprocess_config, model_config, train_config):
     synth_step = train_config["step"]["synth_step"]
     val_step = train_config["step"]["val_step"]
 
-    outer_bar = tqdm(total=total_step, desc="Training", position=0)
-    outer_bar.n = args.restore_step
-    outer_bar.update()
+    # outer_bar = tqdm(total=total_step, desc="Training", position=0)
+    # outer_bar.n = args.restore_step
+    # outer_bar.update()
 
     while True:
-        inner_bar = tqdm(total=len(loader), desc="Epoch {}".format(epoch), position=1)
+        inner_bar = tqdm(total=len(loader), desc="Training Epoch {}".format(epoch), position=1)
         for batchs in loader:
             for batch in batchs:
                 batch = to_device(batch, device)
@@ -101,7 +103,8 @@ def main(args, preprocess_config, model_config, train_config):
                     with open(train_log_path, "a") as f:
                         f.write(message1 + message2 + "\n")
 
-                    outer_bar.write(message1 + message2)
+                    # outer_bar.write(message1 + message2)
+                    inner_bar.write(message1 + message2)
                     log(train_logger, step, losses=losses)
 
                 if step % synth_step == 0:
@@ -127,7 +130,7 @@ def main(args, preprocess_config, model_config, train_config):
 
                     with open(os.path.join(val_log_dir, "log.txt"), "a") as f:
                         f.write(message + "\n")
-                    outer_bar.write(message)
+                    # outer_bar.write(message)
 
                     model.train()
 
@@ -139,7 +142,7 @@ def main(args, preprocess_config, model_config, train_config):
                 if step == total_step:
                     quit()
                 step += 1
-                outer_bar.update(1)
+                # outer_bar.update(1)
 
             inner_bar.update(1)
         epoch += 1
